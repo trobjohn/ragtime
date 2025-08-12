@@ -7,7 +7,7 @@ import requests
 import pandas as pd
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
-LLM_MODEL  = os.environ.get("LLM_MODEL", "mistral")
+LLM_MODEL  = os.environ.get("LLM_MODEL", "gemma:2b")
 COLLECTION = "course"
 
 st.set_page_config(page_title="Course RAG (Local)", layout="wide")
@@ -177,14 +177,55 @@ if st.button("Go") and q:
             page = meta.get("page", "?")
             cites.append(f"[{i}] {src} p{page}")
             context.append(f"[{i}] ({src} p{page}) {txt}")
+        
+        ## Prompting and context:
+                
+        # prompt = (
+        #     "Use the context to answer. FIRST cite snippet IDs like [1],[2] before any claims. "
+        #     "If unsure, say what is missing. Keep it concise.\n\n"
+        #     "CONTEXT:\n" + "\n\n".join(context) + f"\n\nQUESTION: {q}\nANSWER:"
+        #     )
+        
+
+        system = (
+            "You are a tutor answering STRICTLY from provided context. "
+            "Rules: (1) Start with citations like [1][2] before claims. "
+            "(2) Use ONLY the snippets; do not invent facts; do not add external links or resources. "
+            "(3) If the context is insufficient, say: 'Not in corpus' and suggest what to search next. "
+            "(4) Keep it concise and student-friendly."
+        )
+
         prompt = (
-            "Use the context to answer. FIRST cite snippet IDs like [1],[2] before any claims. "
-            "If unsure, say what is missing. Keep it concise.\n\n"
+            "Use the context to answer. FIRST cite snippet IDs like [1],[2]. "
+            "If unsure, say 'Not in corpus.'\n\n"
             "CONTEXT:\n" + "\n\n".join(context) + f"\n\nQUESTION: {q}\nANSWER:"
         )
+
         try:
-            r = requests.post(OLLAMA_URL, json={"model": LLM_MODEL, "prompt": prompt, "stream": False}, timeout=120)
+            r = requests.post(
+                OLLAMA_URL,
+                json={
+                    "model": os.environ.get("LLM_MODEL","mistral"),
+                    "system": system,
+                    "prompt": prompt,
+                    "stream": True,
+                    "options": {
+                        "temperature": 0.1,     # less 'creative'
+                        "top_p": 0.9,
+                        "num_ctx": 4096
+                    }
+                },
+                timeout=120
+            )
             ans = r.json().get("response", "(no response)")
+
+
+
+
+
+
+            # r = requests.post(OLLAMA_URL, json={"model": LLM_MODEL, "prompt": prompt, "stream": False}, timeout=120)
+            # ans = r.json().get("response", "(no response)")
         except Exception as e:
             ans = f"(LLM error: {e})"
         st.markdown("### Answer")
