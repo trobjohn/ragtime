@@ -3,6 +3,7 @@ from typing import List, Tuple
 import fitz  # pymupdf
 import chromadb
 from chromadb.utils import embedding_functions
+from chromadb.config import Settings
 from tqdm import tqdm
 
 DATA_DIR = "data"
@@ -75,7 +76,8 @@ def ensure_dirs():
 
 def main():
     ensure_dirs()
-    client = chromadb.Client()
+    #client = chromadb.Client()
+    client = chromadb.Client(Settings(anonymized_telemetry=False))
     embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
         model_name="all-MiniLM-L6-v2"
     )

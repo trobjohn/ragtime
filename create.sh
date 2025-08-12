@@ -14,6 +14,7 @@ pip3 install -r requirements.txt
 ollama run gemma:2b
 
 ## Pull your content
+export ANONYMIZED_TELEMETRY=FALSE
 python ingest.py
 
 ## Connect to your LLM

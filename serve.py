@@ -17,9 +17,20 @@ st.title("Course RAG (Local)")
 def get_chroma():
     return chromadb.Client()
 
+# @st.cache_resource
+# def get_collection(_client):
+#     return _client.get_or_create_collection(COLLECTION)
+
 @st.cache_resource
-def get_collection(client):
+def get_chroma():
+    from chromadb.config import Settings
+    return chromadb.Client(Settings(anonymized_telemetry=False))
+
+@st.cache_resource
+def get_collection():
+    client = get_chroma()
     return client.get_or_create_collection(COLLECTION)
+
 
 @st.cache_resource
 def load_bm25_corpus():
@@ -38,7 +49,7 @@ def load_bm25_corpus():
     return bm25, texts, metas
 
 client = get_chroma()
-coll   = get_collection(client)
+coll   = get_collection() # edited for client error
 bm25, bm_texts, bm_metas = load_bm25_corpus()
 
 def bm25_query(q: str, topk: int = 20):
