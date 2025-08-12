@@ -8,6 +8,7 @@ import pandas as pd
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
 LLM_MODEL  = os.environ.get("LLM_MODEL", "gemma:2b")
+EXTRAS_DIR = os.path.join("data", "extras")  # change to "books" later if you rename
 COLLECTION = "course"
 
 st.set_page_config(page_title="Course RAG (Local)", layout="wide")
@@ -77,10 +78,47 @@ def load_bm25_corpus():
     bm25 = BM25Okapi(tokenized)
     return bm25, texts, metas
 
-
 client = get_chroma()
 coll   = get_collection() # edited for client error
 bm25, bm_texts, bm_metas = load_bm25_corpus()
+
+
+# --- Sidebar source controls ---
+book_files = []
+if os.path.exists(EXTRAS_DIR):
+    book_files = sorted([f for f in os.listdir(EXTRAS_DIR) if f.lower().endswith(".pdf")])
+# after bm25, bm_texts, bm_metas = load_bm25_corpus()
+sources_by_type = {"pdf": set(), "ipynb": set(), "py": set()}
+for m in (bm_metas or []):
+    t = m.get("type")
+    s = m.get("source", "")
+    if t in sources_by_type and s:
+        sources_by_type[t].add(s)
+
+books_indexed = sorted(sources_by_type["pdf"])
+
+with st.sidebar:
+    st.markdown("### Reference pool")
+    pool = st.radio("Choose books:", ["All books", "Custom"], horizontal=True)
+    selected_books = books_indexed if pool == "All books" else st.multiselect(
+        "Books (PDFs in data/extras/)", options=books_indexed, default=books_indexed
+    )
+    include_notes = st.checkbox("Include notebooks (.ipynb)", value=True)
+    include_py    = st.checkbox("Include .py comments", value=False)
+
+def current_allowed_sources():
+    allowed = set(selected_books)
+    if include_notes:
+        allowed |= sources_by_type["ipynb"]
+    if include_py:
+        allowed |= sources_by_type["py"]
+    # If absolutely nothing selected, don't filter at all:
+    return allowed or None
+
+####################################################
+
+
+
 
 def bm25_query(q: str, topk: int = 20):
     if bm25 is None:
@@ -99,8 +137,8 @@ def semantic_query(q: str, topk: int = 10):
         sim = 1.0 - float(dist)  # invert cosine distance
         out.append((sim, d, m))
     return out
-
-def hybrid_query(q: str, k_sem: int = 10, k_bm: int = 20, w_sem: float = 0.6):
+def hybrid_query(q: str, k_sem: int = 10, k_bm: int = 20, w_sem: float = 0.6,
+                 allowed_sources: set | None = None):
     sem = semantic_query(q, k_sem)
     bm  = bm25_query(q, k_bm)
 
@@ -133,14 +171,22 @@ def hybrid_query(q: str, k_sem: int = 10, k_bm: int = 20, w_sem: float = 0.6):
             agg[k]["meta"] = m
 
     scored = []
-    for k, v in agg.items():
+    for _, v in agg.items():
         score = w_sem*v["sem"] + (1-w_sem)*v["bm"]
         scored.append((score, v["txt"], v["meta"]))
+
     scored.sort(key=lambda t: -t[0])
+
+    if allowed_sources:  # filter AFTER scored exists
+        scored = [(s, txt, m) for (s, txt, m) in scored
+                  if m.get("source","") in allowed_sources]
+
     return scored
 
-def page_finder(q: str, topn: int = 5, w_sem: float = 0.6):
-    hits = hybrid_query(q, k_sem=15, k_bm=50, w_sem=w_sem)
+def page_finder(q: str, topn: int = 5, w_sem: float = 0.6,
+                allowed_sources: set | None = None):
+    hits = hybrid_query(q, k_sem=15, k_bm=50, w_sem=w_sem,
+                        allowed_sources=allowed_sources)
     from collections import defaultdict
     bucket = defaultdict(list)
     for s, txt, m in hits:
@@ -151,33 +197,99 @@ def page_finder(q: str, topn: int = 5, w_sem: float = 0.6):
     rows = []
     for (src, page, sec), chunks in bucket.items():
         best = max(chunks, key=lambda t: t[0])
-        snippet = best[1][:240].replace("\\n", " ") + ("…" if len(best[1])>240 else "")
-        rows.append({"source": src, "page": page, "section": sec, "score": best[0], "snippet": snippet})
+        snippet = best[1][:240].replace("\n", " ") + ("…" if len(best[1])>240 else "")
+        rows.append({"source": src, "page": page, "section": sec,
+                     "score": best[0], "snippet": snippet})
     rows.sort(key=lambda r: -r["score"])
     return rows[:topn]
 
 with st.sidebar:
     st.markdown("### Tools")
-    mode = st.radio("Mode", ["Ask", "Page Finder"], horizontal=True)
+    mode = st.radio("Mode", ["Regex Mentions", "Corpus Search", "Page Finder", "Ask"], horizontal=True)
     w_sem = st.slider("Hybrid weight (semantic)", 0.0, 1.0, 0.6, 0.05)
-    topk  = st.slider("Top‑k context chunks", 3, 12, 5, 1)
+    topk  = st.slider("Top‑k context chunks", 3, 25, 5, 1)
 
-q = st.text_input("Query")
-if st.button("Go") and q:
-    if mode == "Page Finder":
-        rows = page_finder(q, topn=8, w_sem=w_sem)
-        st.subheader("Likely relevant pages")
-        st.dataframe(pd.DataFrame(rows))
-    else:
-        hits = hybrid_query(q, k_sem=12, k_bm=60, w_sem=w_sem)[:topk]
-        context = []
-        cites = []
-        for i, (score, txt, meta) in enumerate(hits, start=1):
-            src = meta.get("source", "")
-            page = meta.get("page", "?")
-            cites.append(f"[{i}] {src} p{page}")
-            context.append(f"[{i}] ({src} p{page}) {txt}")
-        
+    q = st.text_input("Query")
+
+# if st.button("Go") and q:
+#     allowed = current_allowed_sources()    
+#     if mode == "Page Finder":
+#         rows = page_finder(q, topn=8, w_sem=w_sem, allowed_sources=allowed)
+#         st.subheader("Likely relevant pages")
+#         st.dataframe(pd.DataFrame(rows))
+#     else:
+#         hits = hybrid_query(q, k_sem=20, k_bm=60, w_sem=w_sem, allowed_sources=allowed)[:topk]
+#         context = []
+#         cites = []
+#         for i, (score, txt, meta) in enumerate(hits, start=1):
+#             src = meta.get("source", "")
+#             page = meta.get("page", "?")
+#             cites.append(f"[{i}] {src} p{page}")
+#             context.append(f"[{i}] ({src} p{page}) {txt}")
+
+    if st.button("Go") and q:
+        allowed = current_allowed_sources()
+
+        if mode == "Regex Mentions":
+            # needs: find_mentions(...) helper + sidebar toggles whole_word, case_sensitive, use_regex
+            rows = find_mentions(
+                q,
+                allowed_sources=allowed,
+                whole_word=whole_word,
+                case_sensitive=case_sensitive,
+                use_regex=use_regex,
+                topn=100,
+            )
+            st.subheader(f"Occurrences of “{q}”")
+            st.dataframe(pd.DataFrame(rows))
+
+        elif mode == "Corpus Search":
+            # needs: corpus_search(...) helper + sidebar slider topn_search
+            rows = corpus_search(q, allowed_sources=allowed, topn=topn_search)
+            st.subheader("Top matches (BM25, corpus-only)")
+            st.dataframe(pd.DataFrame(rows))
+
+        elif mode == "Page Finder":
+            rows = page_finder(q, topn=8, w_sem=w_sem, allowed_sources=allowed)
+            st.subheader("Likely relevant pages")
+            st.dataframe(pd.DataFrame(rows))
+
+        else:  # "Ask" (RAG + LLM)
+            hits = hybrid_query(q, k_sem=20, k_bm=60, w_sem=w_sem, allowed_sources=allowed)[:topk]
+            if not hits:
+                st.warning("No context found. Try widening your source selection or switching modes.")
+            else:
+                context, cites = [], []
+                for i, (score, txt, meta) in enumerate(hits, start=1):
+                    src  = meta.get("source", "")
+                    page = meta.get("page", "?")
+                    cites.append(f"[{i}] {src} p{page}")
+                    context.append(f"[{i}] ({src} p{page}) {txt}")
+
+                prompt = (
+                    "Use the context to answer. FIRST cite snippet IDs like [1],[2]. "
+                    "If unsure, say 'Not in corpus.'\n\n"
+                    "CONTEXT:\n" + "\n\n".join(context) + f"\n\nQUESTION: {q}\nANSWER:"
+                )
+
+                try:
+                    r = requests.post(
+                        OLLAMA_URL,
+                        json={"model": LLM_MODEL, "prompt": prompt, "stream": False, "options": {"temperature": 0.1}},
+                        timeout=120
+                    )
+                    ans = r.json().get("response", "(no response)")
+                except Exception as e:
+                    ans = f"(LLM error: {e})"
+
+                st.markdown("### Answer")
+                st.write(ans)
+                with st.expander("Context & Citations"):
+                    st.markdown("\n".join(cites))
+                    for i, (score, txt, meta) in enumerate(hits, start=1):
+                        st.markdown(f"**[{i}]** {meta.get('source')} p{meta.get('page','?')} — score {score:.3f}")
+                        st.write(txt[:1200] + ("…" if len(txt) > 1200 else ""))
+
         ## Prompting and context:
                 
         # prompt = (
