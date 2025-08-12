@@ -28,7 +28,7 @@ def read_ipynb_markdown(path: str) -> str:
         for cell in nb.get("cells", []):
             if cell.get("cell_type", "") == "markdown":
                 parts.append("".join(cell.get("source", [])))
-        return "\\n\\n".join(parts)
+        return "\n\n".join(parts) # error edited \\n -> \n
     except Exception as e:
         print(f"[WARN] Failed to parse {path}: {e}")
         return ""
@@ -64,7 +64,7 @@ def read_python_comments(path: str) -> str:
                 content.append(stripped)
             elif in_docstring or stripped.startswith("#"):
                 content.append(stripped)
-        return "\\n".join(content)
+        return "\n".join(content) # error edited
     except Exception as e:
         print(f"[WARN] Failed to parse {path}: {e}")
         return ""
@@ -137,7 +137,7 @@ def main():
     with open(jpath, "w", encoding="utf-8") as f:
         for _id, doc, meta in zip(all_ids, all_docs, all_metas):
             rec = {"id": _id, "text": doc, "meta": meta}
-            f.write(json.dumps(rec, ensure_ascii=False) + "\\n")
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n") # error edited
     print(f"Wrote lexical corpus mirror: {jpath}")
     print("Done.")
 

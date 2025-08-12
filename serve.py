@@ -32,21 +32,51 @@ def get_collection():
     return client.get_or_create_collection(COLLECTION)
 
 
+# @st.cache_resource
+# def load_bm25_corpus():
+#     path = os.path.join("index", "docs.jsonl")
+#     if not os.path.exists(path):
+#         return None, None, None
+#     texts, metas, ids = [], [], []
+#     with open(path, "r", encoding="utf-8") as f:
+#         for line in f:
+#             rec = json.loads(line)
+#             texts.append(rec["text"])
+#             metas.append(rec["meta"])
+#             ids.append(rec["id"])
+#     tokenized = [t.split() for t in texts]
+#     bm25 = BM25Okapi(tokenized)
+#     return bm25, texts, metas
+
 @st.cache_resource
 def load_bm25_corpus():
     path = os.path.join("index", "docs.jsonl")
     if not os.path.exists(path):
         return None, None, None
-    texts, metas, ids = [], [], []
+
+    # Read whole file; handle both JSONL and concatenated JSON objects.
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            rec = json.loads(line)
-            texts.append(rec["text"])
-            metas.append(rec["meta"])
-            ids.append(rec["id"])
+        blob = f.read().strip()
+
+    texts, metas, ids = [], [], []
+    dec = json.JSONDecoder()
+    i, n = 0, len(blob)
+    while i < n:
+        # skip whitespace/newlines between objects
+        while i < n and blob[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        obj, j = dec.raw_decode(blob, i)   # robust: works even without newlines
+        i = j
+        texts.append(obj["text"])
+        metas.append(obj["meta"])
+        ids.append(obj["id"])
+
     tokenized = [t.split() for t in texts]
     bm25 = BM25Okapi(tokenized)
     return bm25, texts, metas
+
 
 client = get_chroma()
 coll   = get_collection() # edited for client error
