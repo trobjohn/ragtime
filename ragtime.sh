@@ -2,7 +2,7 @@
 python3 -m venv .ragtime && source .ragtime/bin/activate
 
 # 1) get the repo
-git clone https://github.com/ds4e/ragtime && cd ragtime
+git clone https://github.com/trobjohn/ragtime && cd ragtime
 
 # 2) install deps
 pip install -r requirements.txt
